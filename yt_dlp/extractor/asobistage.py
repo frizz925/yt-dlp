@@ -78,6 +78,23 @@ class AsobiStageIE(InfoExtractor):
 
         return owned_tickets
 
+    @functools.cached_property
+    def _owned_seat_tickets(self):
+        owned_tickets = set()
+        if not self._is_logged_in:
+            return owned_tickets
+
+        name = 'asobiticket history'
+        response = self._download_json(
+            f'{self._API_HOST}/api/v1/asobi_ticket/tpapi/get_order', None,
+            f'Downloading {name}', f'Unable to download {name}')
+        if traverse_obj(response, 'result') != 'success':
+            return owned_tickets
+        owned_tickets.update(
+            traverse_obj(response, ('asobiticket_list', ..., 'seat_cd')))
+
+        return owned_tickets
+
     def _get_available_channel_id(self, channel):
         channel_id = traverse_obj(channel, ('chennel_vspf_id', {str}))
         if not channel_id:
@@ -86,12 +103,14 @@ class AsobiStageIE(InfoExtractor):
         if traverse_obj(channel, ('viewrights', lambda _, v: v['rights_type_id'] == 6)):
             return channel_id
         available_tickets = traverse_obj(channel, (
-            'viewrights', ..., ('tickets', 'serialcodes'), ..., 'digital_product_id', {str_or_none}))
-        if not self._owned_tickets.intersection(available_tickets):
-            self.report_warning(
-                f'You are not a ticketholder for "{channel.get("channel_name") or channel_id}"')
-            return None
-        return channel_id
+            'viewrights', ..., 'tickets', ..., 'digital_product_id', {str_or_none}))
+        if self._owned_tickets.intersection(available_tickets):
+            return channel_id
+        available_seat_tickets = traverse_obj(channel, ('viewrights', ..., 'asobitickets', ..., 'seat_cd'))
+        if self._owned_seat_tickets.intersection(available_seat_tickets):
+            return channel_id
+        self.report_warning(f'You are not a ticketholder for "{channel.get("channel_name") or channel_id}"')
+        return None
 
     def _real_initialize(self):
         if self._get_cookies(self._API_HOST):
